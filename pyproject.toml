@@ -151,6 +151,7 @@ mmau = [
     "google-genai==1.25.0",
     "transformers==4.51.3",
     "huggingface-hub>=0.30.0,<1.0",
+    "absl-py>=2.1.0",
 ]
 # Orbax checkpointing.
 orbax = [
