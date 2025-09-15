@@ -16,11 +16,11 @@ from axlearn.open_api.common import BaseClient, ClientRateLimitError, Validation
 
 # pylint: disable=import-error
 # pytype: disable=import-error
-from openai.types.chat.chat_completion_message import (
-    ChatCompletionMessage,
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCall,
+    Function,
 )
-from openai.types.chat.chat_completion_message_tool_call import Function
 
 from google.genai import Client, types
 
@@ -66,32 +66,67 @@ class GeminiClient(BaseClient):
         else:
             gemini_tools = None
         client: Client = self._client
-        extra_body = copy.deepcopy(cfg.extra_body)
+        extra_body = copy.deepcopy(cfg.extra_body) or {}
+        # Build config kwargs and include thinking only if explicitly requested via extra_body.
+        config_kwargs: dict[str, Any] = {
+            "temperature": kwargs.get("temperature", None),
+            "top_k": kwargs.get("top_k", None),
+            "top_p": kwargs.get("top_p", None),
+            "max_output_tokens": kwargs.get("max_tokens", None),
+            "stop_sequences": kwargs.get("stop_sequences", None),
+            "tools": gemini_tools,
+        }
+        include_thinking = (
+            ("thinking_budget" in extra_body) or ("include_thoughts" in extra_body)
+        )
+        if include_thinking:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=extra_body.get("thinking_budget", 1024),
+                include_thoughts=extra_body.get("include_thoughts", True),
+            )
+
         try:
             response = await client.aio.models.generate_content(
                 model=cfg.model,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    temperature=kwargs.get("temperature", None),
-                    top_k=kwargs.get("top_k", None),
-                    top_p=kwargs.get("top_p", None),
-                    max_output_tokens=kwargs.get("max_tokens", None),
-                    stop_sequences=kwargs.get("stop_sequences", None),
-                    thinking_config=types.ThinkingConfig(
-                        thinking_budget=extra_body.get("thinking_budget", 1024),
-                        include_thoughts=extra_body.get("include_thoughts", True),
-                    ),
-                    tools=gemini_tools,
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
             return json.dumps(response.model_dump(mode="json"))
         # pylint: disable-next=broad-except,broad-exception-caught
         except Exception as e:
-            if "resource has been exhausted" in str(e).lower():
+            msg = str(e).lower()
+            # Handle models that do not support thinking by retrying without thinking_config.
+            if include_thinking and ("thinking is not supported" in msg or "include_thoughts" in msg):
+                try:
+                    config_kwargs.pop("thinking_config", None)
+                    response = await client.aio.models.generate_content(
+                        model=cfg.model,
+                        contents=contents,
+                        config=types.GenerateContentConfig(**config_kwargs),
+                    )
+                    return json.dumps(response.model_dump(mode="json"))
+                # Fall through to generic handling if retry also fails.
+                except Exception as e2:  # pylint: disable=broad-except
+                    msg = str(e2).lower()
+                    if (
+                        "resource has been exhausted" in msg
+                        or "resource exhausted" in msg
+                        or "too many requests" in msg
+                        or "429" in msg
+                    ):
+                        raise ClientRateLimitError("Rate limiting") from e2
+                    self._maybe_reduce_tokens(e2, request_kwargs=kwargs)
+                    raise e2
+
+            if (
+                "resource has been exhausted" in msg
+                or "resource exhausted" in msg
+                or "too many requests" in msg
+                or "429" in msg
+            ):
                 raise ClientRateLimitError("Rate limiting") from e
-            else:
-                self._maybe_reduce_tokens(e, request_kwargs=kwargs)
-                raise e
+            self._maybe_reduce_tokens(e, request_kwargs=kwargs)
+            raise e
 
     def _maybe_reduce_tokens(self, exception: Exception, request_kwargs: dict):
         """Reduces completion tokens based on the exception message.
@@ -133,7 +168,7 @@ class GeminiClient(BaseClient):
             message = ChatCompletionMessage(role="assistant", content="")
             for part in candidate["content"].get("parts", []):
                 if "text" in part:
-                    if part["thought"]:
+                    if part.get("thought", False):
                         message.reasoning_content = part["text"]
                     else:
                         message.content = part["text"]
