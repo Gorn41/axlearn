@@ -1,0 +1,21 @@
+axlearn @ git+https://github.com/apple/axlearn.git@main
+
+transformers==4.51.3
+
+huggingface-hub>=0.30.0,<1.0
+
+openai>=1.44.0
+
+anthropic==0.31.2
+
+nbformat==5.10.4
+
+plotly==5.22.0
+
+nbconvert==7.16.4
+
+google-cloud-aiplatform==1.50.0
+
+google-genai==1.25.0
+
+absl-py>=2.1.0
