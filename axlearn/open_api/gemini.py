@@ -161,17 +161,25 @@ class GeminiClient(BaseClient):
 
         generations = []
         for candidate in response["candidates"]:
-            if candidate.get("content", None) is None:
+            content_obj = candidate.get("content", None)
+            if not content_obj:
                 continue
+
+            # parts may be missing or null or malformed; normalize to a list
+            parts = content_obj.get("parts") if isinstance(content_obj, dict) else []
+            if not parts or not isinstance(parts, list):
+                parts = []
 
             tool_calls = []
             message = ChatCompletionMessage(role="assistant", content="")
-            for part in candidate["content"].get("parts", []):
+            for part in parts:
                 if "text" in part:
                     if part.get("thought", False):
-                        message.reasoning_content = part["text"]
+                        if part["text"] is not None:
+                            message.reasoning_content = part["text"]
                     else:
-                        message.content = part["text"]
+                        if part["text"] is not None:
+                            message.content = part["text"]
                 if (
                     "function_call" not in part
                     or part["function_call"] is None
