@@ -16,11 +16,11 @@ from axlearn.open_api.common import BaseClient, ClientRateLimitError, Validation
 
 # pylint: disable=import-error
 # pytype: disable=import-error
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-from openai.types.chat.chat_completion_message_tool_call import (
+from openai.types.chat.chat_completion_message import (
+    ChatCompletionMessage,
     ChatCompletionMessageToolCall,
-    Function,
 )
+from openai.types.chat.chat_completion_message_tool_call import Function
 
 from google.genai import Client, types
 
@@ -68,28 +68,21 @@ class GeminiClient(BaseClient):
         client: Client = self._client
         extra_body = copy.deepcopy(cfg.extra_body)
         try:
-            # Only include thinking_config if explicitly requested via extra_body to avoid
-            # INVALID_ARGUMENT errors on models that do not support thinking.
-            generate_config_kwargs = dict(
-                temperature=kwargs.get("temperature", None),
-                top_k=kwargs.get("top_k", None),
-                top_p=kwargs.get("top_p", None),
-                max_output_tokens=kwargs.get("max_tokens", None),
-                stop_sequences=kwargs.get("stop_sequences", None),
-                tools=gemini_tools,
-            )
-            if extra_body.get("thinking_budget") is not None or extra_body.get(
-                "include_thoughts"
-            ) is not None:
-                generate_config_kwargs["thinking_config"] = types.ThinkingConfig(
-                    thinking_budget=extra_body.get("thinking_budget", 1024),
-                    include_thoughts=extra_body.get("include_thoughts", True),
-                )
-
             response = await client.aio.models.generate_content(
                 model=cfg.model,
                 contents=contents,
-                config=types.GenerateContentConfig(**generate_config_kwargs),
+                config=types.GenerateContentConfig(
+                    temperature=kwargs.get("temperature", None),
+                    top_k=kwargs.get("top_k", None),
+                    top_p=kwargs.get("top_p", None),
+                    max_output_tokens=kwargs.get("max_tokens", None),
+                    stop_sequences=kwargs.get("stop_sequences", None),
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=extra_body.get("thinking_budget", 1024),
+                        include_thoughts=extra_body.get("include_thoughts", True),
+                    ),
+                    tools=gemini_tools,
+                ),
             )
             return json.dumps(response.model_dump(mode="json"))
         # pylint: disable-next=broad-except,broad-exception-caught
